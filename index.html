@@ -1,19 +1,371 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Flow Builder</title>
-  <link rel="stylesheet" href="style.css" />
-  <!-- React + Babel from CDN -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  <!-- React Flow UMD build -->
-  <script src="https://unpkg.com/reactflow@11.11.4/dist/umd/index.min.js" crossorigin></script>
-  <link rel="stylesheet" href="https://unpkg.com/reactflow@11.11.4/dist/style.css" />
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Flow Builder</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/drawflow@0.0.59/dist/drawflow.min.css"/>
+<style>
+/* ── Reset ──────────────────────────────────── */
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;height:100vh;overflow:hidden;}
+
+/* ── Sidebar ─────────────────────────────────── */
+#sidebar{width:220px;min-width:220px;background:#1e293b;border-right:1px solid #334155;display:flex;flex-direction:column;overflow-y:auto;height:100vh;}
+.sb{padding:12px 14px;border-bottom:1px solid #334155;}
+.sb-title{font-size:11px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:2px;margin-bottom:0;}
+.lbl{font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;}
+input,select{width:100%;padding:6px 8px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:5px;font-size:11px;font-family:inherit;margin-bottom:5px;outline:none;}
+input:focus,select:focus{border-color:#7c3aed;}
+button{width:100%;padding:7px;border:none;border-radius:5px;cursor:pointer;font-size:11px;font-family:inherit;font-weight:500;margin-bottom:4px;}
+button:hover{opacity:.85;}
+.b-purple{background:#7c3aed;color:#fff;}
+.b-gray  {background:#334155;color:#e2e8f0;}
+.b-blue  {background:#1d4ed8;color:#fff;}
+.b-green {background:#065f46;color:#6ee7b7;}
+.b-red   {background:#7f1d1d;color:#fca5a5;}
+.b-teal  {background:#0f766e;color:#99f6e4;}
+.file-lbl{display:block;width:100%;padding:7px;border-radius:5px;cursor:pointer;font-size:11px;font-weight:500;text-align:center;background:#1d4ed8;color:#fff;margin-bottom:4px;}
+.file-lbl:hover{opacity:.85;}
+
+/* palette drag items */
+.pal-item{padding:9px;border-radius:6px;margin-bottom:5px;cursor:grab;font-size:11px;font-weight:600;text-align:center;transition:transform .1s;}
+.pal-item:hover{transform:translateX(3px);}
+.pal-item:active{cursor:grabbing;}
+
+/* color dots */
+.cdots{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px;}
+.cdot{width:22px;height:22px;border-radius:50%;cursor:pointer;border:2.5px solid transparent;transition:border-color .1s,transform .1s;}
+.cdot:hover{transform:scale(1.2);}
+.cdot.on{border-color:#fff;}
+
+.hint{font-size:10px;color:#475569;line-height:1.65;background:#0f172a;border-radius:5px;padding:7px;}
+#sel-panel{display:none;}
+#sel-panel.show{display:block;}
+
+/* ── Canvas ───────────────────────────────────── */
+#canvas-wrap{flex:1;height:100vh;overflow:hidden;background:#0f172a;background-image:radial-gradient(#1e293b 1px,transparent 1px);background-size:28px 28px;}
+#drawflow{width:100%;height:100%;}
+
+/* ── Drawflow overrides ───────────────────────── */
+.drawflow{background:transparent!important;}
+
+/* Node shell */
+.drawflow .drawflow-node{
+  background:transparent!important;
+  border:none!important;
+  box-shadow:none!important;
+  padding:0!important;
+  min-width:0!important;
+  min-height:0!important;
+  border-radius:0!important;
+}
+.drawflow .drawflow-node.selected .node-body{box-shadow:0 0 0 2.5px #f59e0b!important;}
+
+/* Node body */
+.node-body{
+  display:flex;align-items:center;justify-content:center;
+  min-width:130px;min-height:55px;padding:8px 14px;
+  font-size:12px;font-weight:600;text-align:center;line-height:1.3;
+  border-radius:8px;
+  filter:drop-shadow(0 3px 10px rgba(0,0,0,.4));
+  pointer-events:none;
+}
+.nb-process {background:#7c3aed;color:#fff;}
+.nb-start   {background:#eab308;color:#1a1a1a;border-radius:50px;}
+.nb-data    {background:#10b981;color:#fff;}
+/* decision diamond */
+.nb-decision-wrap{position:relative;width:140px;height:70px;display:flex;align-items:center;justify-content:center;pointer-events:none;}
+.nb-decision-bg{position:absolute;inset:0;background:#6b7280;clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%);filter:drop-shadow(0 3px 10px rgba(0,0,0,.4));}
+.nb-decision-txt{position:relative;z-index:1;color:#fff;font-size:11px;font-weight:600;text-align:center;padding:0 20px;line-height:1.3;}
+
+/* Ports */
+.drawflow .drawflow-node .input,
+.drawflow .drawflow-node .output{
+  width:12px!important;height:12px!important;
+  background:#22d3ee!important;border:2px solid #0f172a!important;border-radius:50%!important;
+  transition:transform .1s,background .1s;
+}
+.drawflow .drawflow-node .input:hover,
+.drawflow .drawflow-node .output:hover{background:#fff!important;transform:scale(1.4)!important;}
+
+/* Connection lines */
+.drawflow-connection .main-path{stroke-width:2.5!important;fill:none;}
+.drawflow-connection .main-path:hover{stroke-width:4!important;opacity:.8;}
+
+/* Right-click delete */
+.drawflow-delete{background:#ef4444;color:#fff;border:none;border-radius:4px;padding:4px 12px;font-size:11px;cursor:pointer;}
+</style>
 </head>
 <body>
-  <div id="root"></div>
-  <script src="app.js"></script>
+
+<div id="sidebar">
+  <div class="sb"><div class="sb-title">⬡ Flow Builder</div></div>
+
+  <!-- Palette -->
+  <div class="sb">
+    <div class="lbl">Drag onto canvas</div>
+    <div class="pal-item" style="background:#7c3aed;color:#fff" draggable="true" data-shape="process"  data-label="Process">Process</div>
+    <div class="pal-item" style="background:#6b7280;color:#fff" draggable="true" data-shape="decision" data-label="Decision">Decision</div>
+    <div class="pal-item" style="background:#eab308;color:#1a1a1a" draggable="true" data-shape="start" data-label="Start/End">Start / End</div>
+    <div class="pal-item" style="background:#10b981;color:#fff" draggable="true" data-shape="data"    data-label="Data">Data</div>
+  </div>
+
+  <!-- Add by typing -->
+  <div class="sb">
+    <div class="lbl">Add shape</div>
+    <select id="add-type">
+      <option value="process">Process</option>
+      <option value="decision">Decision</option>
+      <option value="start">Start / End</option>
+      <option value="data">Data</option>
+    </select>
+    <input id="add-label" placeholder="Label…" onkeydown="if(event.key==='Enter')addShape()"/>
+    <button class="b-purple" onclick="addShape()">+ Add Shape</button>
+  </div>
+
+  <!-- Arrow color -->
+  <div class="sb">
+    <div class="lbl">Arrow color</div>
+    <div class="cdots" id="color-dots"></div>
+    <div class="hint">Drag from a ● port to connect.<br/>Right-click a node or line to delete.</div>
+  </div>
+
+  <!-- Selected item panel -->
+  <div class="sb" id="sel-panel">
+    <div class="lbl" id="sel-title">Selected</div>
+    <input id="sel-label" placeholder="Label…" oninput="updateSelLabel(this.value)"/>
+    <div id="sel-color-wrap" style="display:none">
+      <div class="lbl">Color</div>
+      <div class="cdots" id="sel-color-dots"></div>
+    </div>
+    <button class="b-red" onclick="deleteSelected()">✕ Delete</button>
+  </div>
+
+  <!-- Data -->
+  <div class="sb">
+    <div class="lbl">Diagram data</div>
+    <button class="b-blue" onclick="exportJSON()">⬇ Export JSON</button>
+    <label class="file-lbl">⬆ Import JSON<input type="file" accept=".json" style="display:none" onchange="importJSON(event)"/></label>
+    <button class="b-gray"  onclick="clearAll()">✕ Clear all</button>
+  </div>
+
+  <!-- Legend -->
+  <div class="sb" style="margin-top:auto">
+    <div class="lbl">Tips</div>
+    <div class="hint">
+      🖱 Drag nodes to move<br/>
+      ● Drag port → port to connect<br/>
+      🖱 Right-click → delete<br/>
+      🔍 Ctrl + scroll to zoom<br/>
+      ✏ Click node to edit label
+    </div>
+  </div>
+</div>
+
+<div id="canvas-wrap">
+  <div id="drawflow"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/drawflow@0.0.59/dist/drawflow.min.js"></script>
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+const COLORS=['#10b981','#ef4444','#f59e0b','#3b82f6','#ec4899','#a855f7'];
+let activeColor='#10b981';
+let selNodeId=null, selConnData=null;
+
+// ── Init editor ───────────────────────────────────────────────────────────────
+const editor=new Drawflow(document.getElementById('drawflow'));
+editor.reroute=true;
+editor.reroute_fix_curvature=true;
+editor.start();
+
+// Inject per-color SVG arrow markers
+setTimeout(()=>{
+  const svg=document.querySelector('#drawflow svg');
+  if(!svg)return;
+  let defs=svg.querySelector('defs')||document.createElementNS('http://www.w3.org/2000/svg','defs');
+  svg.insertBefore(defs,svg.firstChild);
+  COLORS.forEach(c=>{
+    const id='arr-'+c.replace('#','');
+    const m=document.createElementNS('http://www.w3.org/2000/svg','marker');
+    m.setAttribute('id',id);m.setAttribute('viewBox','0 0 10 10');
+    m.setAttribute('refX','8');m.setAttribute('refY','5');
+    m.setAttribute('markerWidth','5');m.setAttribute('markerHeight','5');
+    m.setAttribute('orient','auto');
+    const p=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+    p.setAttribute('points','0,0 10,5 0,10');p.setAttribute('fill',c);
+    m.appendChild(p);defs.appendChild(m);
+  });
+},200);
+
+function getMarker(c){return `url(#arr-${c.replace('#','')})`;}
+
+// ── Color picker builder ──────────────────────────────────────────────────────
+function buildDots(containerId,onClick){
+  const el=document.getElementById(containerId);
+  el.innerHTML='';
+  COLORS.forEach(c=>{
+    const d=document.createElement('div');
+    d.className='cdot'+(c===activeColor?' on':'');
+    d.style.background=c;d.dataset.c=c;
+    d.onclick=()=>{activeColor=c;onClick(c);refreshDots();};
+    el.appendChild(d);
+  });
+}
+function refreshDots(){
+  document.querySelectorAll('.cdot').forEach(d=>{
+    d.classList.toggle('on',d.dataset.c===activeColor);
+  });
+}
+buildDots('color-dots',()=>{});
+buildDots('sel-color-dots',c=>{recolorSel(c);});
+
+// ── Node HTML ─────────────────────────────────────────────────────────────────
+function nodeHTML(shape,label){
+  if(shape==='decision')
+    return `<div class="nb-decision-wrap"><div class="nb-decision-bg"></div><div class="nb-decision-txt">${label}</div></div>`;
+  const cls={process:'nb-process',start:'nb-start',data:'nb-data'}[shape]||'nb-process';
+  return `<div class="node-body ${cls}">${label}</div>`;
+}
+
+// ── Add node ──────────────────────────────────────────────────────────────────
+let _x=80,_y=80;
+function addShapeAt(shape,label,x,y){
+  editor.addNode(shape,1,1,x,y,shape,{shape,label},nodeHTML(shape,label));
+}
+function addShape(){
+  const label=document.getElementById('add-label').value.trim()||
+    {process:'Process',decision:'Decision',start:'Start/End',data:'Data'}[document.getElementById('add-type').value];
+  const shape=document.getElementById('add-type').value;
+  _x=80+Math.random()*350;_y=60+Math.random()*300;
+  addShapeAt(shape,label,_x,_y);
+  document.getElementById('add-label').value='';
+}
+
+// ── Palette drag ──────────────────────────────────────────────────────────────
+document.querySelectorAll('.pal-item').forEach(el=>{
+  el.addEventListener('dragstart',e=>{
+    e.dataTransfer.setData('shape',el.dataset.shape);
+    e.dataTransfer.setData('label',el.dataset.label);
+  });
+});
+const wrap=document.getElementById('drawflow');
+wrap.addEventListener('dragover',e=>e.preventDefault());
+wrap.addEventListener('drop',e=>{
+  e.preventDefault();
+  const shape=e.dataTransfer.getData('shape');
+  const label=e.dataTransfer.getData('label');
+  if(!shape)return;
+  const r=wrap.getBoundingClientRect();
+  const x=(e.clientX-r.left-editor.canvas_x)/editor.zoom;
+  const y=(e.clientY-r.top -editor.canvas_y)/editor.zoom;
+  addShapeAt(shape,label,x-65,y-27);
+});
+
+// ── Connection coloring ───────────────────────────────────────────────────────
+function colorLastConn(color){
+  setTimeout(()=>{
+    const paths=document.querySelectorAll('.drawflow-connection .main-path');
+    const last=paths[paths.length-1];
+    if(last){last.style.stroke=color;last.setAttribute('marker-end',getMarker(color));}
+  },40);
+}
+editor.on('connectionCreated',()=>colorLastConn(activeColor));
+
+// ── Selection ─────────────────────────────────────────────────────────────────
+editor.on('nodeSelected',id=>{
+  selNodeId=id;selConnData=null;
+  const node=editor.getNodeFromId(id);
+  document.getElementById('sel-title').textContent='✦ Selected Shape';
+  document.getElementById('sel-label').value=node?.data?.label||'';
+  document.getElementById('sel-color-wrap').style.display='none';
+  document.getElementById('sel-panel').className='sb show';
+});
+editor.on('nodeUnselected',()=>{
+  selNodeId=null;
+  document.getElementById('sel-panel').className='sb';
+});
+editor.on('connectionSelected',(data)=>{
+  selConnData=data;selNodeId=null;
+  document.getElementById('sel-title').textContent='→ Selected Arrow';
+  document.getElementById('sel-label').value='';
+  document.getElementById('sel-color-wrap').style.display='block';
+  document.getElementById('sel-panel').className='sb show';
+});
+editor.on('connectionUnselected',()=>{
+  selConnData=null;
+  document.getElementById('sel-panel').className='sb';
+});
+
+// ── Update label ──────────────────────────────────────────────────────────────
+function updateSelLabel(val){
+  if(!selNodeId)return;
+  const node=editor.getNodeFromId(selNodeId);
+  if(!node)return;
+  const shape=node.data.shape||node.name;
+  editor.updateNodeDataFromId(selNodeId,{shape,label:val});
+  const inner=document.querySelector(`#node-${selNodeId} .node-body, #node-${selNodeId} .nb-decision-txt`);
+  if(inner)inner.textContent=val;
+}
+
+// ── Recolor connection ────────────────────────────────────────────────────────
+function recolorSel(color){
+  if(!selConnData)return;
+  const {output_id,input_id}=selConnData;
+  document.querySelectorAll(
+    `.connection[data-output="${output_id}"][data-input="${input_id}"] .main-path`
+  ).forEach(p=>{p.style.stroke=color;p.setAttribute('marker-end',getMarker(color));});
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+function deleteSelected(){
+  if(selNodeId){editor.removeNodeId('node-'+selNodeId);selNodeId=null;}
+  else if(selConnData){
+    editor.removeSingleConnection(selConnData.output_id,selConnData.input_id,selConnData.output_class,selConnData.input_class);
+    selConnData=null;
+  }
+  document.getElementById('sel-panel').className='sb';
+}
+
+// ── Export / Import ───────────────────────────────────────────────────────────
+function exportJSON(){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(editor.export(),null,2)],{type:'application/json'}));
+  a.download='diagram.json';a.click();
+}
+function importJSON(e){
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=ev=>{try{editor.import(JSON.parse(ev.target.result));}catch{alert('Invalid JSON');}};
+  r.readAsText(f);e.target.value='';
+}
+function clearAll(){if(confirm('Clear all?'))editor.clearModuleSelected();}
+
+// ── Default diagram ───────────────────────────────────────────────────────────
+function loadDefault(){
+  const H=nodeHTML;
+  editor.addNode('start',   0,1, 60, 220,'start',   {shape:'start',   label:'Start'},   H('start',   'Start'));
+  editor.addNode('process', 1,1,270, 220,'process', {shape:'process', label:'Step 1'},  H('process', 'Step 1'));
+  editor.addNode('decision',1,1,460, 210,'decision',{shape:'decision',label:'Check?'},  H('decision','Check?'));
+  editor.addNode('process', 1,1,660, 120,'process', {shape:'process', label:'Yes Path'},H('process', 'Yes Path'));
+  editor.addNode('process', 1,1,660, 310,'process', {shape:'process', label:'No Path'}, H('process', 'No Path'));
+  setTimeout(()=>{
+    editor.addConnection(1,2,'output_1','input_1');
+    editor.addConnection(2,3,'output_1','input_1');
+    editor.addConnection(3,4,'output_1','input_1');
+    editor.addConnection(3,5,'output_1','input_1');
+    // Color connections
+    setTimeout(()=>{
+      const paths=document.querySelectorAll('.drawflow-connection .main-path');
+      paths.forEach((p,i)=>{
+        const c=i===3?'#ef4444':'#10b981';
+        p.style.stroke=c;p.setAttribute('marker-end',getMarker(c));
+      });
+    },150);
+  },100);
+}
+setTimeout(loadDefault,100);
+</script>
 </body>
 </html>

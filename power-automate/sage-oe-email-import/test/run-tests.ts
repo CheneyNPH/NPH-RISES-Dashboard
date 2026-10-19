@@ -169,45 +169,56 @@ const serial = (iso: string) => excelDate(iso);
 
 // ───────────── tests ─────────────
 
-console.log("HTML email (Outlook table, samples/order-email.html) on NPH's template");
+console.log("HTML invoice email (Outlook table, no quantities, samples/order-email.html) on NPH's template");
 {
   const html = fs.readFileSync(__dirname + "/../../samples/order-email.html", "utf8");
   const { sheet, result } = run(html, { subject: "PO 45-10872 - new order", sender: "jane.ortiz@northwind.example" });
   check("customer from sender address", [result.customerId, result.customerMatch], ["C-1001", "sender address jane.ortiz@northwind.example"]);
-  check("status is REVIEW because the template has no QUANTITY column", result.status, "REVIEW");
-  check("quantity issues", result.issues.split("\n"), [
-    "Line 1 (LMP-103-BLK) is for 12, but the import template has no QUANTITY column - set the quantity in Intacct after importing.",
-    "Line 2 (LMP-105) is for 1200, but the import template has no QUANTITY column - set the quantity in Intacct after importing.",
-  ]);
+  check("status", [result.status, result.issues], ["READY", ""]);
   check("CSV starts with a UTF-8 BOM and the template's own header row",
-    result.csv.split("\r\n")[0], "﻿" + TEMPLATE_HEADERS.join(","));
-  check("CSV rows", csvRecords(result.csv), [
-    { TRANSACTIONTYPE: "Sales Order", DATE: "10/16/2026", GLPOSTINGDATE: "10/16/2026", CUSTOMER_ID: "C-1001", DATEDUE: "10/30/2026",
-      DEPARTMENTID: "", LOCATIONID: "", LINE: "1", ITEMID: "LMP-103-BLK", PRICE: "45", REFERENCENO: "45-10872", STATE: "Draft",
-      CLASSID: "", MEMO: "Fluorescent Desk Lamp, Black" },
-    { TRANSACTIONTYPE: "Sales Order", DATE: "10/16/2026", GLPOSTINGDATE: "10/16/2026", CUSTOMER_ID: "C-1001", DATEDUE: "10/30/2026",
-      DEPARTMENTID: "", LOCATIONID: "", LINE: "2", ITEMID: "LMP-105", PRICE: "3.25", REFERENCENO: "45-10872", STATE: "Draft",
-      CLASSID: "", MEMO: "Halogen Desk Lamp" },
+    result.csv.split("\r\n")[0], "\ufeff" + TEMPLATE_HEADERS.join(","));
+  const row = (line: string, item: string, price: string, memo: string) => ({
+    TRANSACTIONTYPE: "Sales Order", DATE: "10/16/2026", GLPOSTINGDATE: "10/16/2026", CUSTOMER_ID: "C-1001", DATEDUE: "10/30/2026",
+    DEPARTMENTID: "", LOCATIONID: "", LINE: line, ITEMID: item, PRICE: price, REFERENCENO: "45-10872", STATE: "Draft", CLASSID: "", MEMO: memo });
+  check("CSV rows: Amount column becomes PRICE, accounting negative kept, Total row ignored", csvRecords(result.csv), [
+    row("1", "INST-100", "1250", "Installation - Building A"),
+    row("2", "MAINT-200", "480", "Quarterly maintenance, Q4"),
+    row("3", "DISC-10", "-50", "Loyalty discount"),
   ]);
+  check("every line is quantity 1", (result.summaryHtml.match(/text-align:right;">1</g) || []).length, 3);
   const grid = sheet.grid();
-  check("sheet: header row kept, data starts on row 2, blank row reused", [grid[0], grid.length], [TEMPLATE_HEADERS, 3]);
+  check("sheet: header row kept, data starts on row 2, blank row reused", [grid[0], grid.length], [TEMPLATE_HEADERS, 4]);
   check("sheet: dates are real Excel dates", [grid[1][1], sheet.formats["1,1"], grid[1][4]], [serial("2026-10-16"), "mm/dd/yyyy", serial("2026-10-30")]);
   check("sheet: IDs stored as text", [sheet.formats["1,3"], sheet.formats["1,8"], sheet.formats["1,10"]], ["@", "@", "@"]);
-  check("sheet: line and price are numbers", [grid[1][7], grid[1][9], grid[2][9]], [1, 45, 3.25]);
+  check("sheet: line and price are numbers", [grid[1][7], grid[1][9], grid[3][9]], [1, 1250, -50]);
   check("summary shows how the customer was matched", /sender address jane\.ortiz@northwind\.example/.test(result.summaryHtml), true);
   fs.writeFileSync(__dirname + "/sample-output.json", JSON.stringify({ name: sheet.name, rows: grid,
     formats: grid.map((row, r) => row.map((_, c) => sheet.formats[`${r},${c}`] || "")) }, null, 2));
   fs.writeFileSync(__dirname + "/sample-output.csv", result.csv);
 }
 
-console.log("Quantity-1 order is READY");
+console.log("Quantities");
 {
-  const body = "PO #: 7001\nItem\tQty\nSVC-INSTALL\t1\nSVC-TRAIN\t1";
-  const { result } = run(body, { sender: "east.buyer@contoso.example" });
-  check("status", result.status, "READY");
-  check("issues", result.issues, "");
-  check("due date falls back to order date", pick(csvRecords(result.csv), ["DATE", "DATEDUE", "ITEMID"]),
-    [["10/19/2026", "10/19/2026", "SVC-INSTALL"], ["10/19/2026", "10/19/2026", "SVC-TRAIN"]]);
+  let r = run("PO #: 7001\nItem\tDescription\nINST-100\tInstallation\nTRAINING\tOn-site training", { sender: "east.buyer@contoso.example" }).result;
+  check("item + description only (no amount): READY, due date = order date",
+    [r.status, pick(csvRecords(r.csv), ["DATE", "DATEDUE", "ITEMID", "PRICE"])],
+    ["READY", [["10/19/2026", "10/19/2026", "INST-100", ""], ["10/19/2026", "10/19/2026", "TRAINING", ""]]]);
+
+  r = run("PO: 7002\nDescription\tAmount\nInstallation\t500.00\nTravel\t75.50", { sender: "east.buyer@contoso.example" }).result;
+  check("description + amount, no item column: lines kept, ITEMID flagged",
+    [r.status, pick(csvRecords(r.csv), ["ITEMID", "PRICE", "MEMO"]), r.issues.split("\n").length],
+    ["REVIEW", [["", "500", "Installation"], ["", "75.5", "Travel"]], 2]);
+
+  r = run("PO: 7003\nItem\tQty\tUnit Price\nINST-100\t3\t100.00", { sender: "east.buyer@contoso.example" }).result;
+  check("an email that does show qty 3 is flagged (would bill 1 x unit price)",
+    [r.status, r.issues], ["REVIEW", "Line 1 (INST-100) shows quantity 3 in the email, but lines import as quantity 1 - check the price."]);
+
+  r = run("PO: 7004\nItem\tQty\tAmount\nINST-100\t1\t100.00", { sender: "east.buyer@contoso.example" }).result;
+  check("an explicit qty of 1 is fine", r.status, "READY");
+
+  const full = run("PO: 7005\nItem\tAmount\nINST-100\t100.00", { sender: "east.buyer@contoso.example",
+    template: [["TRANSACTIONTYPE", "DATE", "CUSTOMER_ID", "LINE", "ITEMID", "QUANTITY", "PRICE"]] });
+  check("if QUANTITY is ever added to the template it gets 1", pick(csvRecords(full.result.csv), ["ITEMID", "QUANTITY", "PRICE"]), [["INST-100", "1", "100"]]);
 }
 
 console.log("Customer lookup");
@@ -293,8 +304,9 @@ console.log("Email formats");
   const text = fs.readFileSync(__dirname + "/../../samples/order-email.txt", "utf8");
   let r = run(text, { subject: "New order", sender: "buyer@bargainmart.example" }).result;
   check("plain text: customer, PO, need-by date", [r.customerId, r.poNumber, csvRecords(r.csv)[0].DATEDUE], ["C-1002", "77311", "11/04/2026"]);
+  check("plain text: READY", [r.status, r.issues], ["READY", ""]);
   check("plain text: lines", pick(csvRecords(r.csv), ["LINE", "ITEMID", "PRICE", "MEMO"]),
-    [["1", "LMP-103-BLK", "45", "Fluorescent Desk Lamp"], ["2", "CAB-450", "189.99", "Steel Filing Cabinet"]]);
+    [["1", "INST-100", "1250", "Installation - Building B"], ["2", "TRAVEL", "312.4", "Travel and lodging"]]);
 
   const nbsp =
     '<div><p class=MsoNormal>PO #: 77311<o:p></o:p></p>\n' +
@@ -309,8 +321,9 @@ console.log("Email formats");
   check("pipe table, PO from subject, item ID case kept", [r.status, r.poNumber, pick(csvRecords(r.csv), ["ITEMID"])],
     ["READY", "99812", [["lmp-103-blk"], ["CAB-450"]]]);
 
-  r = run("<p>PO: 5501</p><p>Item: LMP-103-BLK Qty: 1</p><p>Item: CAB-450 Qty: 1</p>", { sender: "east.buyer@contoso.example" }).result;
-  check("one item per line (no table)", pick(csvRecords(r.csv), ["LINE", "ITEMID"]), [["1", "LMP-103-BLK"], ["2", "CAB-450"]]);
+  r = run("<p>PO: 5501</p><p>Item: INST-100 Amount: $1,250.00</p><p>Item: TRAVEL</p>", { sender: "east.buyer@contoso.example" }).result;
+  check("one item per line (no table), amount optional", [r.status, pick(csvRecords(r.csv), ["LINE", "ITEMID", "PRICE"])],
+    ["READY", [["1", "INST-100", "1250"], ["2", "TRAVEL", ""]]]);
 
   const unreadable = run("<p>Hi, please see the attached PO. Thanks!</p>", { subject: "Order attached" });
   check("unreadable email -> REVIEW with 3 issues", [unreadable.result.status, unreadable.result.issues.split("\n").length], ["REVIEW", 3]);

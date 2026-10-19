@@ -32,7 +32,8 @@ interface Config {
   documentNumberFromPo: boolean;  // false = leave DOCUMENTNO blank for Intacct auto-numbering
   headerOnFirstLineOnly: boolean; // false = repeat header values (date, customer...) on every line row
   dueDateSource: string;          // DATEDUE: "requested" (email's ship/need-by date, else order date), "order" or "blank"
-  defaultUnit: string;            // UNIT is required; used when the email gives no unit
+  defaultQuantity: number;        // used when a line shows no quantity (your invoices never do)
+  defaultUnit: string;            // used when the email gives no unit, if the template has UNIT
   unitNames: UnitName[];          // unit written in emails -> Intacct unit name
   includePrices: boolean;         // false = Intacct prices the lines from the price list
   requirePoNumber: boolean;
@@ -90,6 +91,7 @@ function getConfig(): Config {
     documentNumberFromPo: false,
     headerOnFirstLineOnly: false,
     dueDateSource: "requested",
+    defaultQuantity: 1,
     defaultUnit: "Each",
     unitNames: [{ from: "EA", to: "Each" }, { from: "EACH", to: "Each" }],
     includePrices: true,
@@ -162,10 +164,12 @@ function getConfig(): Config {
     ],
 
     // Line-item table headers. Checked top to bottom; each table column is claimed
-    // by the first field that matches it, so IGNORE keeps totals and line numbers out.
+    // by the first field that matches it, so IGNORE keeps line numbers out. PRICE (unit price)
+    // is used when the table has one; otherwise AMOUNT (the line total) becomes the price.
     lineColumns: [
-      { field: "IGNORE", labels: [/ext|total|amount|amt|^line\s*(?:#|no\.?)?$|^ln$|^#$/] },
+      { field: "IGNORE", labels: [/^line\s*(?:#|no\.?)?$|^ln$|^#$/] },
       { field: "DESC", labels: [/desc|name/] },
+      { field: "AMOUNT", labels: [/ext|total|amount|amt/] },
       { field: "PRICE", labels: [/price|cost|^each$|^rate$/] },
       { field: "QTY", labels: [/qty|quantity|qnty|^order(?:ed)?\s*q/] },
       { field: "UNIT", labels: [/^u\/?m$|uom|unit\s*of\s*measure|^units?$|^pack$/] },
@@ -346,7 +350,10 @@ function findLines(config: Config, text: string, issues: string[]): OrderLine[] 
     }
     const headerCells = splitCells(textLines[i], delimiter);
     const columns = mapColumns(config, headerCells);
-    if (columns.item < 0 || columns.qty < 0) {
+    const priceColumn = columns.price >= 0 ? columns.price : columns.amount;
+    const isItemTable = columns.item >= 0 && (columns.desc >= 0 || columns.qty >= 0 || priceColumn >= 0);
+    const isDescriptionTable = columns.desc >= 0 && (columns.qty >= 0 || priceColumn >= 0);
+    if (!isItemTable && !isDescriptionTable) {
       continue;
     }
 
@@ -371,18 +378,22 @@ function findLines(config: Config, text: string, issues: string[]): OrderLine[] 
       }
       const rowLabel = `Row ${lines.length + 1} ("${raw.replace(/\t/g, " | ")}")`;
       if (cells.length !== headerCells.length) {
-        issues.push(`${rowLabel} has ${cells.length} columns but the table header has ${headerCells.length} - check item/qty/price.`);
+        issues.push(`${rowLabel} has ${cells.length} columns but the table header has ${headerCells.length} - check the item and amount.`);
       }
 
       const item = cell(cells, columns.item);
       const qtyText = cell(cells, columns.qty);
-      if (!item && !qtyText) {
+      const priceText = cell(cells, priceColumn);
+      if (!item && !priceText) {
+        continue; // a note or blank row inside the table
+      }
+      const qty = qtyText ? parseNumber(qtyText) : config.defaultQuantity;
+      if (isNaN(qty) || qty <= 0) {
+        issues.push(`${rowLabel} skipped - quantity "${qtyText}" is not a number.`);
         continue;
       }
-      const qty = parseNumber(qtyText);
-      if (!item || isNaN(qty) || qty <= 0) {
-        issues.push(`${rowLabel} skipped - missing item number or quantity.`);
-        continue;
+      if (!item) {
+        issues.push(`${rowLabel} has no item ID - fill in ITEMID in the import file.`);
       }
 
       let unit = cell(cells, columns.unit);
@@ -390,7 +401,7 @@ function findLines(config: Config, text: string, issues: string[]): OrderLine[] 
       if (!unit && qtyUnit) {
         unit = qtyUnit[1];
       }
-      const price = parseNumber(cell(cells, columns.price));
+      const price = parseNumber(priceText);
       lines.push({
         item: item,
         description: cell(cells, columns.desc),
@@ -405,23 +416,25 @@ function findLines(config: Config, text: string, issues: string[]): OrderLine[] 
     }
   }
 
-  // Fallback: one line item per line, e.g. "Item: A1-103/0  Qty: 5"
+  // Fallback: one line item per line, e.g. "Item: INST-100  Amount: $1,250.00" (qty optional)
   const lines: OrderLine[] = [];
-  const inline = /(?:item|sku|part)\s*(?:#|no\.?|number)?\s*[:#]\s*([A-Za-z0-9][\w\-\/.]*)[\s\S]*?(?:qty|quantity)\s*[:=x]?\s*([\d,]+(?:\.\d+)?)\s*([A-Za-z]{1,10})?/i;
+  const inline = /(?:item|sku|part)\s*(?:#|no\.?|number)?\s*[:#]\s*([A-Za-z0-9][\w\-\/.]*)(?:[^\n]*?(?:qty|quantity)\s*[:=x]?\s*([\d,]+(?:\.\d+)?))?(?:[^\n]*?(?:price|amount|amt|total)\s*[:=]?\s*(\(?\s*\$?\s*-?[\d,]+(?:\.\d+)?\s*\)?))?/i;
   for (const raw of textLines) {
     const m = inline.exec(raw);
     if (m) {
-      lines.push({ item: m[1], description: "", qty: parseNumber(m[2]), unit: m[3] || "", price: 0, hasPrice: false });
+      const price = parseNumber(m[3] || "");
+      lines.push({ item: m[1], description: "", qty: m[2] ? parseNumber(m[2]) : config.defaultQuantity, unit: "",
+        price: isNaN(price) ? 0 : price, hasPrice: !isNaN(price) });
     }
   }
   return normalizeLines(config, lines);
 }
 
-interface ColumnMap { item: number; desc: number; qty: number; unit: number; price: number; }
+interface ColumnMap { item: number; desc: number; qty: number; unit: number; price: number; amount: number; }
 
 function mapColumns(config: Config, headerCells: string[]): ColumnMap {
   const claimed: boolean[] = headerCells.map(() => false);
-  const result: ColumnMap = { item: -1, desc: -1, qty: -1, unit: -1, price: -1 };
+  const result: ColumnMap = { item: -1, desc: -1, qty: -1, unit: -1, price: -1, amount: -1 };
   for (const col of config.lineColumns) {
     for (let c = 0; c < headerCells.length; c++) {
       const name = headerCells[c].toLowerCase().replace(/[:.]+$/, "").trim();
@@ -434,6 +447,7 @@ function mapColumns(config: Config, headerCells: string[]): ColumnMap {
       if (col.field === "QTY") { result.qty = c; }
       if (col.field === "UNIT") { result.unit = c; }
       if (col.field === "PRICE") { result.price = c; }
+      if (col.field === "AMOUNT") { result.amount = c; }
       if (col.field !== "IGNORE") {
         break;
       }
@@ -478,9 +492,15 @@ function normalizeLines(config: Config, lines: OrderLine[]): OrderLine[] {
   return lines;
 }
 
+/** Reads "1,250.00", "$45", "-50" or accounting-style "($50.00)" (negative). */
 function parseNumber(value: string): number {
-  const m = /-?\d[\d,]*(?:\.\d+)?|-?\.\d+/.exec((value || "").replace(/[$\s]/g, ""));
-  return m ? parseFloat(m[0].replace(/,/g, "")) : NaN;
+  const s = (value || "").replace(/[$\s]/g, "");
+  const m = /-?\d[\d,]*(?:\.\d+)?|-?\.\d+/.exec(s);
+  if (!m) {
+    return NaN;
+  }
+  const n = parseFloat(m[0].replace(/,/g, ""));
+  return /^\(.*\)$/.test(s) ? -Math.abs(n) : n;
 }
 
 /** Returns yyyy-mm-dd, or "" if the text has no recognizable date. Numeric dates are read as US m/d/y. */
@@ -815,11 +835,12 @@ function writeImport(workbook: ExcelScript.Workbook, config: Config, order: Pars
     }
   }
 
-  // Without a QUANTITY column every line imports as one unit, so flag lines for more than one.
+  // Lines import as quantity 1 (no QUANTITY column), so an email that does show a larger
+  // quantity would be under-billed at the unit price - flag it rather than guess.
   if (fieldOf.indexOf("quantity") < 0) {
     order.lines.forEach((l, i) => {
       if (l.qty !== 1) {
-        order.issues.push(`Line ${i + 1} (${l.item}) is for ${l.qty}, but the import template has no QUANTITY column - set the quantity in Intacct after importing.`);
+        order.issues.push(`Line ${i + 1} (${l.item}) shows quantity ${l.qty} in the email, but lines import as quantity 1 - check the price.`);
       }
     });
   }

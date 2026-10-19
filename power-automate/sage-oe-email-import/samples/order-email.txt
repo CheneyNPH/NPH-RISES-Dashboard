@@ -7,9 +7,9 @@ PO #: 77311
 Need By: 2026-11-04
 Notes: Partial shipments OK
 
-Item         Description                 Qty    Price
-LMP-103-BLK  Fluorescent Desk Lamp       6      45.00
-CAB-450      Steel Filing Cabinet        2      189.99
+Item         Description                 Amount
+INST-100     Installation - Building B   1,250.00
+TRAVEL       Travel and lodging          312.40
 
 Thanks,
 Purchasing

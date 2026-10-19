@@ -6,7 +6,7 @@ When an order email arrives, this flow:
 2. Looks up the **Intacct customer ID** in your customer reference file (`Customer_Map.xlsx`), using the sender's address, their domain, a customer name or code in the email, and so on.
 3. Fills in your **Intacct Order Entry import template**, one row per order line, and saves it both as Excel and as **CSV** (Intacct's import screen only accepts CSV).
 4. Emails the person who uploads to Intacct. The email carries the CSV, the Excel copy, and **every attachment from the original email** (e.g. the customer's PO PDF), plus a summary of what was read.
-5. Marks the result **READY** or **REVIEW NEEDED**. If anything was missing or unclear (customer not found, a quantity it couldn't read, a bad date…), the email lists exactly what to check before importing.
+5. Marks the result **READY** or **REVIEW NEEDED**. If anything was missing or unclear (customer not found, a line with no item ID, a bad date…), the email lists exactly what to check before importing.
 6. If the flow itself fails, it forwards the original email to that person so the order isn't lost.
 
 ```
@@ -47,12 +47,12 @@ This is what goes into each column today. Anything marked ⚠ needs your answer:
 | DEPARTMENTID, LOCATIONID, CLASSID | ⚠ Blank. Fill in your dimension IDs if every order uses the same ones. | `fixedValues` |
 | LINE | 1, 2, 3… | |
 | ITEMID | Item number from the email, exactly as written (Intacct IDs are case-sensitive) | `uppercaseItems` |
-| PRICE | ⚠ Unit price from the email. Lines without a price are left blank. | `includePrices` (set `false` to always leave PRICE blank) |
+| PRICE | ⚠ The line's amount from the email (a *Price* / *Unit Price* column if there is one, otherwise *Amount* / *Total*). Lines without one are left blank. `($50.00)` imports as `-50`. | `includePrices` (set `false` to always leave PRICE blank) |
 | REFERENCENO | Customer PO number | |
 | STATE | ⚠ `Draft`, so each order is opened in Intacct (attach the PO there) and then submitted. Use `Pending` to import orders ready to go. | `state` |
 | MEMO | ⚠ The customer's item description from the email | `columns` → `itemDescription` |
 
-> ⚠ **There is no QUANTITY column in your template.** The email's quantities therefore can't be imported, so every order with a line for more than 1 is marked **REVIEW NEEDED** with the quantities listed. If you add `QUANTITY` (and `UNIT`, if your items use units of measure) to the template, the script fills them automatically and those warnings go away. Intacct normally requires QUANTITY and UNIT on Order Entry lines, so it's worth downloading a fresh template from Intacct to check.
+> **Quantity:** your invoices never show quantities, so every line imports as **quantity 1**, and the line's amount goes into PRICE. Your template has no QUANTITY column, so Intacct applies its default. If Intacct ever rejects the import for a missing quantity, add a `QUANTITY` column to the template and the script fills it with `1` (setting: `defaultQuantity`). As a safety net, if an email *does* show a quantity other than 1, the order is marked REVIEW NEEDED, because importing it as 1 × unit price would under-bill.
 
 ## 2. One-time setup
 
@@ -245,7 +245,7 @@ Rather not keep a separate file? You can paste customers into `customerMap` in `
 
 1. Add a test customer to `Customer_Map.xlsx` with **your own** email address under *Sender Emails*.
 2. Send an order email to the watched mailbox with a PDF attached. Use the text of `samples/order-email.txt`, or open `samples/order-email.html` in a browser and paste it into Outlook so the table comes through.
-3. Within a minute or two, the uploader gets the notification with the .csv, .xlsx, and your PDF. It will say REVIEW NEEDED because of the quantities (section 1) until QUANTITY is in the template.
+3. Within a minute or two, the uploader gets **Intacct OE import ready | PO 45-10872 | <your test customer ID>** (for the .html sample) with the .csv, .xlsx, and your PDF. The .txt sample says `Account #: 1100`, so it comes back REVIEW NEEDED unless you add `1100` under the test customer's *Other Names or Codes*. That's a good check that the flagging works.
 4. Import the CSV into an Intacct **sandbox** first, if you have one.
 
 ## 6. What the script recognizes in emails
@@ -259,7 +259,7 @@ Rather not keep a separate file? You can paste customers into `customerMap` in `
 | Ship / need-by date | Ship Date, Requested Ship Date, Delivery Date, Required Date, Due Date, Need By, Ship By |
 | Instructions | Comments, Notes, Special Instructions. These are shown in the notification; add `MESSAGE` to the template to import them. |
 
-**Line items:** the first table (HTML table, tab-separated, `|`-separated, or columns aligned with spaces) whose header row has an item column (*Item, Item #, SKU, Part #, Product…*) and a quantity column (*Qty, Quantity…*). Description, unit (*UOM, U/M*), and price (*Price, Unit Price*) columns are optional. *Line #* and *Ext. Price / Total* columns are ignored, and the table stops at a Subtotal/Total/Tax/Freight row. Lines like `Item: LMP-103 Qty: 5` also work.
+**Line items:** the first table (HTML table, tab-separated, `|`-separated, or columns aligned with spaces) whose header row has an item column (*Item, Item #, SKU, Part #, Product…*) next to a description or amount column, or a *Description* column next to an amount column. Amounts come from *Price / Unit Price / Rate*, or else *Amount / Total / Ext. Price*. Every line is quantity 1; a *Qty* column is read only to flag quantities other than 1. *Line #* columns are ignored, and the table stops at a Subtotal/Total/Tax/Freight row. A line without an item ID is kept, and the order is flagged so someone fills in ITEMID. Lines like `Item: INST-100 Amount: $1,250.00` also work.
 
 Dates can be written `10/19/2026`, `10/19/26`, `2026-10-19`, `Oct 19, 2026`, or `19-Oct-2026` (numeric dates are read month-first).
 

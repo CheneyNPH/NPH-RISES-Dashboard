@@ -1,0 +1,15 @@
+Hi team,
+
+New order below, PO attached.
+
+Account #: 1100
+PO #: 77311
+Need By: 2026-11-04
+Notes: Partial shipments OK
+
+Item         Description                 Qty    Price
+A1-103/0     Fluorescent Desk Lamp       6      45.00
+A1-450/0     Steel Filing Cabinet        2      189.99
+
+Thanks,
+Purchasing
